@@ -2,7 +2,7 @@
 12 botões frontais
 04 botões traseiros (2 Paddles + 2 botões)
 1 embreagem (potenciometro)
-5 encoders (10 funções) -
+5 encoders (10 funções)
 --------------------
 Matriz de botões
 14 botões - C15 - C0
@@ -22,14 +22,14 @@ Matriz de botões
 -----------------------
 A1 - VRx (Analog)
 A2 - VRy (Analog)
-A3 - Potenciometer (clutch)
+A0 - Potenciometer (clutch)
 */
 
 #include <Joystick.h>
 
 // Comando analogico
 #define joyX A1
-#define joyY A3
+#define joyY A2
 // Potenciometro (Clutch)
 #define joyRZ A0
 
@@ -44,12 +44,13 @@ struct Encoder {
 
 // Configuração dos encoders (ajustado para pinos de interrupção do Leonardo) preferencialmente utilizar esses pinos 0,1,2,3,7
 #define NUM_ENCODERS 5 // Número de encoders
+#define DEBOUNCE_DELAY 15 // Tempo mínimo entre leituras em milissegundos
 Encoder encoders[NUM_ENCODERS] = {
-  {3, 4, 0, false, false},  // Encoder 1 (CLK no pino 3, DT no pino 4)
-  {2, 5, 0, false, false},  // Encoder 2 (CLK no pino 2, DT no pino 5)
-  {0, 6, 0, false, false},  // Encoder 3 (CLK no pino 0, DT no pino 6)
-  {1, 8, 0, false, false},  // Encoder 4 (CLK no pino 1, DT no pino 8)
-  {7, A2, 0, false, false}   // Encoder 5 (CLK no pino 7, DT no pino 9)
+  {3, 4, 0, false, false},  // Encoder 1 (CLK no pino 3, DT no pino 4) - OK
+  {2, 5, 0, false, false},  // Encoder 2 (CLK no pino 2, DT no pino 5) - OK
+  {0, 6, 0, false, false},  // Encoder 3 (CLK no pino 0, DT no pino 6) - OK
+  {1, 8, 0, false, false},  // Encoder 4 (CLK no pino 1, DT no pino 8) - OK
+  {7, A3, 0, false, false}   // Encoder 5 (CLK no pino 7, DT no pino 9) - OK
 };
 
 // Botões do multiplexador
@@ -196,17 +197,30 @@ void selectMuxChannel(int channel) {
 
 void handleEncoder(int encoderIndex) {
   static bool lastCLK[NUM_ENCODERS] = {LOW, LOW, LOW, LOW, LOW}; // Estado anterior do CLK
-  bool currentCLK = digitalRead(encoders[encoderIndex].clkPin);
+  static unsigned long lastDebounceTime[NUM_ENCODERS] = {0, 0, 0, 0, 0}; // Último tempo de leitura válida
 
-  if (currentCLK != lastCLK[encoderIndex] && currentCLK == HIGH) { // Detecta borda de subida
-    if (digitalRead(encoders[encoderIndex].dtPin) != currentCLK) {
-      encoders[encoderIndex].position++; // Gira para a direita (horário)
-      encoders[encoderIndex].directionCW = true;
-    } else {
-      encoders[encoderIndex].position--; // Gira para a esquerda (anti-horário)
-      encoders[encoderIndex].directionCW = false;
+  bool currentCLK = digitalRead(encoders[encoderIndex].clkPin);
+  unsigned long currentTime = millis();
+
+  // Verifica se o tempo mínimo entre leituras foi respeitado
+  if ((currentTime - lastDebounceTime[encoderIndex]) > DEBOUNCE_DELAY) {
+    if (currentCLK != lastCLK[encoderIndex] && currentCLK == HIGH) { // Detecta borda de subida
+      bool currentDT = digitalRead(encoders[encoderIndex].dtPin);
+
+      if (currentDT != currentCLK) {
+        // Sentido horário
+        encoders[encoderIndex].position++;
+        encoders[encoderIndex].directionCW = true;
+      } else if (currentDT == currentCLK) {
+        // Sentido anti-horário
+        encoders[encoderIndex].position--;
+        encoders[encoderIndex].directionCW = false;
+      }
+
+      encoders[encoderIndex].flag = true; // Marca que houve mudança
+      lastDebounceTime[encoderIndex] = currentTime; // Atualiza o tempo da última leitura válida
     }
-    encoders[encoderIndex].flag = true; // Marca que houve mudança
   }
-  lastCLK[encoderIndex] = currentCLK;
+
+  lastCLK[encoderIndex] = currentCLK; // Atualiza o estado anterior do CLK
 }
