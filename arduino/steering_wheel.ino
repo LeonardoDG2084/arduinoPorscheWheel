@@ -2,56 +2,47 @@
 12 botões frontais
 04 botões traseiros (2 Paddles + 2 botões)
 1 embreagem (potenciometro)
-5 encoders (10 funções)
+5 encoders (10 funções) -
 --------------------
 Matriz de botões
 14 botões - C15 - C0
 
 ---------------------
-3/4 - 1 - encoder
-2/5 - 2 - encoder 
-0/6 - 3 - encoder 
-1/8 - 4 - encoder
-7/A0 - 5 - encoder 
+3/4           - 1 - encoder  PCINT2
+2/5           - 2 - encoder  PCINT2
+0/6           - 3 - encoder  PCINT2
+1/7           - 4 - encoder  PCINT2
+A3(21)/A0(18) - 5 - encoder  PCINT1
 ----------------------
 10 - signal - Buttons
 16 - S0
 15 - S1
 14 - S2
-9 - S3
+09 - S3
 -----------------------
 A1 - VRx (Analog)
 A2 - VRy (Analog)
-A0 - Potenciometer (clutch)
+A8(8) - Potenciometer (clutch)
+
+Grupo de interrupções por porta
+# PCINT0 - D8, D9, D10, D11, D12, D13,
+# PCINT1 - A0, A1, A2, A3, A4, A5
+# PCINT2 - D0, D1, D2, D3, D4, D5, D6, D7
+
 */
 
+
 #include <Joystick.h>
+#include <Arduino.h>
+#include <BasicEncoder.h>
+#include <TimerOne.h>
 
 // Comando analogico
 #define joyX A1
 #define joyY A2
+const int deadzone = 30;  // Zona morta para evitar tremores
 // Potenciometro (Clutch)
-#define joyRZ A0
-
-// Estrutura para armazenar os dados de cada encoder
-struct Encoder {
-  int clkPin;                // Pino do sinal CLK
-  int dtPin;                 // Pino do sinal DT
-  volatile int position;     // Posição atual do encoder
-  volatile bool directionCW; // Sentido de rotação
-  volatile bool flag;        // Indica se houve mudança
-};
-
-// Configuração dos encoders (ajustado para pinos de interrupção do Leonardo) preferencialmente utilizar esses pinos 0,1,2,3,7
-#define NUM_ENCODERS 5 // Número de encoders
-#define DEBOUNCE_DELAY 15 // Tempo mínimo entre leituras em milissegundos
-Encoder encoders[NUM_ENCODERS] = {
-  {3, 4, 0, false, false},  // Encoder 1 (CLK no pino 3, DT no pino 4) - OK
-  {2, 5, 0, false, false},  // Encoder 2 (CLK no pino 2, DT no pino 5) - OK
-  {0, 6, 0, false, false},  // Encoder 3 (CLK no pino 0, DT no pino 6) - OK
-  {1, 8, 0, false, false},  // Encoder 4 (CLK no pino 1, DT no pino 8) - OK
-  {7, A3, 0, false, false}   // Encoder 5 (CLK no pino 7, DT no pino 9) - OK
-};
+#define joyRZ A3
 
 // Botões do multiplexador
 #define SIG 10
@@ -67,31 +58,34 @@ int yAxis_ = 0;
 int rzAxis_ = 0;
 
 
+// Encoders
+BasicEncoder encoder1(3, 4);  // Direito           // 1
+BasicEncoder encoder2(7, 18); // Esquerdo          // 2
+BasicEncoder encoder3(0, 1);  // Superior Direito  // 5
+BasicEncoder encoder4(2, 5);  // Inferior Esquerdo // 4
+BasicEncoder encoder5(8, 6);  // Inferior Direito  // 3
 
-// Create Joystick
-Joystick_ Joystick(0x04,JOYSTICK_TYPE_JOYSTICK,
-  26, 0,                                          // Numero de botões, Hat Switch 
-  true, true, false,                              // X,Y and Z Eixos 
-  false,false,                                    // Rudder, throttle  
-  true, false, false                              // Accelerator, Brake and steering
+void timer_service() {
+  encoder1.service();
+  encoder2.service();
+  encoder3.service();
+  encoder4.service();
+  encoder5.service();
+}
+
+// Instancia do Joystick
+Joystick_ Joystick(JOYSTICK_DEFAULT_REPORT_ID,JOYSTICK_TYPE_GAMEPAD,
+  25, 1,                                            // Numero de botões, Hat Switch 
+  false, false, false,                              // X,Y and Z Eixos 
+  false, false, true,                              // Rx, Ry, Rz
+  false, false,                                     // Rudder, throttle  
+  false, false, false                                // Accelerator, Brake and steering
 );
 
-// Funções de interrupção específicas para cada encoder
-void handleEncoder0() { handleEncoder(0); }
-void handleEncoder1() { handleEncoder(1); }
-void handleEncoder2() { handleEncoder(2); }
-void handleEncoder3() { handleEncoder(3); }
-void handleEncoder4() { handleEncoder(4); }
-
-//Set Auto Send State
-//Envia os dados do joystick antes de serem solicitados
-const bool initAutoSendState = true;
-
 void setup() {
-
-
-  // Inicialização
-  Serial.begin(9600);
+  //Serial.begin(115200);
+  Timer1.initialize(1000);
+  Timer1.attachInterrupt(timer_service);
   Joystick.begin(); 
 
   //Comando analogico
@@ -104,68 +98,116 @@ void setup() {
   pinMode(S2,OUTPUT);
   pinMode(S3,OUTPUT);
   pinMode(SIG,INPUT_PULLUP);
-
-   // Encoders Rotativos
-  for (int i = 0; i < NUM_ENCODERS; i++) {
-    pinMode(encoders[i].clkPin, INPUT_PULLUP);
-    pinMode(encoders[i].dtPin, INPUT_PULLUP);
-
-    // Configura interrupções nos pinos CLK
-    attachInterrupt(digitalPinToInterrupt(encoders[i].clkPin), 
-                    i == 0 ? handleEncoder0
-                    : i == 1 ? handleEncoder1
-                    : i == 2 ? handleEncoder2
-                    : i == 3 ? handleEncoder3
-                    : handleEncoder4,
-                    CHANGE);
-  }
 }
 
 void loop() {
 
-  // Encoders rotativos
-  for (int i = 0; i < NUM_ENCODERS; i++) {
-    if (encoders[i].flag) {
-      encoders[i].flag = false;
-
-      // Atualiza os botões de acordo com a direção
-      if (encoders[i].directionCW) {
-        Joystick.setButton(i * 2, true);     // Botão CW ligado
-        Joystick.setButton(i * 2 + 1, false); // Botão CCW desligado
-        Serial.print("(CW) Botão: ");
-        Serial.println(i * 2);
-      } else {
-        Joystick.setButton(i * 2, false);    // Botão CW desligado
-        Joystick.setButton(i * 2 + 1, true); // Botão CCW ligado
-        Serial.print("(CCW) Botão: ");
-        Serial.println(i * 2 + 1);
-      }
-
-      // Libera os botões após um curto intervalo
-      delay(50); // Atraso para evitar falsos acionamentos
-      Joystick.setButton(i * 2, false);
-      Joystick.setButton(i * 2 + 1, false);
+  int encoder_change1 = encoder1.get_change();
+  int encoder_change2 = encoder2.get_change();
+  int encoder_change3 = encoder3.get_change();
+  int encoder_change4 = encoder4.get_change();
+  int encoder_change5 = encoder5.get_change();
+  if (encoder_change1) {
+    if (encoder_change1 == -1) {
+      //Serial.println("Atrás 1");
+      Joystick.setButton(0, true);
+      delay(50);
+      Joystick.setButton(0, false);
     }
+    else {
+      //Serial.println("Frente 1");
+      Joystick.setButton(1, true); 
+      delay(50);
+      Joystick.setButton(1, false); 
+    }
+}
+  if (encoder_change2) {
+    if (encoder_change2 == -1) {
+      //Serial.println("Atrás 2");
+      Joystick.setButton(2, true);
+      delay(50);
+      Joystick.setButton(2, false);
+    }
+    else {
+      //Serial.println("Frente 2");
+      Joystick.setButton(3, true); 
+      delay(50);
+      Joystick.setButton(3, false);
+    }    
   }
-  
+  if (encoder_change3) {
+    if (encoder_change3 == -1) {
+      //Serial.println("Atrás 3");
+      Joystick.setButton(4, true);
+      delay(50);
+      Joystick.setButton(4, false);
+    }
+    else {
+      //Serial.println("Frente 3");
+      Joystick.setButton(5, true); 
+      delay(50);
+      Joystick.setButton(5, false);
+    }    
+  }
+  if (encoder_change4) {
+    if (encoder_change4 == -1) {
+      //Serial.println("Atrás 4");
+      Joystick.setButton(6, true);
+      delay(50);
+      Joystick.setButton(6, false);
+    }
+    else {
+      //Serial.println("Frente 4");
+      Joystick.setButton(7, true); 
+      delay(50);
+      Joystick.setButton(7, false); 
+    }    
+  }
+  if (encoder_change5) {
+    if (encoder_change5 == -1) {
+      //Serial.println("Atrás 5");
+      Joystick.setButton(8, true);
+      delay(50);
+      Joystick.setButton(8, false);       
+    }
+    else {
+      //Serial.println("Frente 5");
+      Joystick.setButton(9, true); 
+      delay(50);
+      Joystick.setButton(9, false); 
+    }    
+  }
 
-  
   // Comando analogico Axis X e Y
-  xAxis_ = analogRead(joyX);
-  yAxis_ = analogRead(joyY);
+  xAxis_ = analogRead(joyX) - 512;
+  yAxis_ = analogRead(joyY) - 512;
+  int hatState = -1;
 
-  Joystick.setXAxis(xAxis_);
-  //Debug
-  //Serial.println(xAxis_);
-  
 
-  Joystick.setYAxis(yAxis_);
-  //Debug
-  //Serial.println(yAxis_);
+  //Debug Analogico
   
+  //Eixo X
+  //Joystick.setXAxis(xAxis_);
+  //Debug
+  Serial.print("X: ");
+  Serial.println(xAxis_);
+  //Eixo Y
+  //Joystick.setYAxis(yAxis_);
+  //Debug
+  Serial.print("y: ");
+  Serial.println(yAxis_);
+
+  // Analogico
+  if (yAxis_ > deadzone) hatState = 180;   // Cima
+  else if (yAxis_ < -deadzone) hatState = 0; // Baixo
+  else if (xAxis_ > deadzone) hatState = 90;  // Direita
+  else if (xAxis_ < -deadzone) hatState = 270; // Esquerda
+  Joystick.setHatSwitch(0, hatState); // Envia o valor do Hat Switch
+
   // Potentiometer 10k 
   rzAxis_ = analogRead(joyRZ);
   Joystick.setRzAxis(rzAxis_);
+  
   //Debug
   //Serial.println(rzAxis_);
 
@@ -178,49 +220,16 @@ void loop() {
     // O multiplexador retorna LOW quando o botão está pressionado
     bool pressed = (buttonState == LOW);
     // Atualiza o estado do botão no joystick
-    Joystick.setButton(button+10, pressed);
+    Joystick.setButton(button+9, pressed);
     //Debug
     //Serial.print("Botão: ");
     //Serial.println(button+10);
-    delay(10);
   }
-
 }
 
-// Leitura da matriz do multiplexador
 void selectMuxChannel(int channel) {
   digitalWrite(S0, channel & 0x01); // LSB
   digitalWrite(S1, channel & 0x02);
   digitalWrite(S2, channel & 0x04);
   digitalWrite(S3, channel & 0x08); // MSB
-}
-
-void handleEncoder(int encoderIndex) {
-  static bool lastCLK[NUM_ENCODERS] = {LOW, LOW, LOW, LOW, LOW}; // Estado anterior do CLK
-  static unsigned long lastDebounceTime[NUM_ENCODERS] = {0, 0, 0, 0, 0}; // Último tempo de leitura válida
-
-  bool currentCLK = digitalRead(encoders[encoderIndex].clkPin);
-  unsigned long currentTime = millis();
-
-  // Verifica se o tempo mínimo entre leituras foi respeitado
-  if ((currentTime - lastDebounceTime[encoderIndex]) > DEBOUNCE_DELAY) {
-    if (currentCLK != lastCLK[encoderIndex] && currentCLK == HIGH) { // Detecta borda de subida
-      bool currentDT = digitalRead(encoders[encoderIndex].dtPin);
-
-      if (currentDT != currentCLK) {
-        // Sentido horário
-        encoders[encoderIndex].position++;
-        encoders[encoderIndex].directionCW = true;
-      } else if (currentDT == currentCLK) {
-        // Sentido anti-horário
-        encoders[encoderIndex].position--;
-        encoders[encoderIndex].directionCW = false;
-      }
-
-      encoders[encoderIndex].flag = true; // Marca que houve mudança
-      lastDebounceTime[encoderIndex] = currentTime; // Atualiza o tempo da última leitura válida
-    }
-  }
-
-  lastCLK[encoderIndex] = currentCLK; // Atualiza o estado anterior do CLK
 }
